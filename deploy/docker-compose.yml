@@ -1,0 +1,73 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: wfv-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-wfv_db}
+      POSTGRES_USER: ${POSTGRES_USER:-wfv_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wfv_secret_2026}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wfv_user} -d ${POSTGRES_DB:-wfv_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    container_name: wfv-go2rtc
+    restart: unless-stopped
+    volumes:
+      - ../ingestion/go2rtc.yaml:/config/go2rtc.yaml:ro
+    ports:
+      - "1984:1984" # Web UI and API
+      - "8554:8554" # RTSP
+      - "8555:8555/tcp" # WebRTC
+      - "8555:8555/udp"
+
+  api:
+    build:
+      context: ../core-api
+      dockerfile: Dockerfile
+    container_name: wfv-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wfv_user}:${POSTGRES_PASSWORD:-wfv_secret_2026}@postgres:5432/${POSTGRES_DB:-wfv_db}
+      JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_key_wfv_2026_production}
+      AES_ENCRYPTION_KEY: ${AES_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      GO2RTC_API_URL: http://go2rtc:1984
+    ports:
+      - "8000:8000"
+
+  vision-worker:
+    build:
+      context: ../vision
+      dockerfile: Dockerfile
+    container_name: wfv-vision
+    restart: unless-stopped
+    depends_on:
+      - api
+      - go2rtc
+    environment:
+      API_BASE_URL: http://api:8000/api/v1
+      GO2RTC_RTSP_URL: rtsp://go2rtc:8554
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+    container_name: wfv-web
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+
+volumes:
+  postgres_data:

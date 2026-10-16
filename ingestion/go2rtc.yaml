@@ -1,0 +1,22 @@
+# go2rtc Configuration for Workforce Vision Platform
+log:
+  level: info
+
+api:
+  listen: ":1984"
+
+rtsp:
+  listen: ":8554"
+
+webrtc:
+  listen: ":8555"
+
+streams:
+  entrance_main:
+    - rtsp://admin:admin123@192.168.1.10:554/Streaming/Channels/101
+  entrance_sub:
+    - rtsp://admin:admin123@192.168.1.10:554/Streaming/Channels/102
+  exit_main:
+    - rtsp://admin:admin123@192.168.1.11:554/Streaming/Channels/101
+  exit_sub:
+    - rtsp://admin:admin123@192.168.1.11:554/Streaming/Channels/102
