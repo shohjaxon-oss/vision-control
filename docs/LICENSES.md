@@ -1,33 +1,30 @@
-# Workforce Vision Platform — Litsenziyalar Ro'yxati va Auditi (`LICENSES.md`)
+# Open-Source Licenses & Compliance
 
-> **Sana:** 2026-10-15  
-> **Qat'iy qoida:** Tijorat yopiq dasturiy ta'minot (proprietary) uchun mos bo'lmagan AGPL-3.0 yoki faqat tadqiqot uchun (Non-Commercial Research Only) berilgan modellar ishlatilmaydi.
+All core vision models, computer vision dependencies, and libraries integrated into the Workforce Vision Platform (WVP) operate strictly under permissive open-source licenses compatible with commercial deployment in the Republic of Uzbekistan.
 
----
+## 1. Computer Vision & Biometric Models
 
-## 1. Ruxsat etilgan va Tasdiqlangan Komponentlar
-
-| Komponent / Model | Vazifasi | Litsenziya | Holati |
+| Component / Model | Project / Origin | License | Usage & Restrictions |
 |---|---|---|---|
-| **OpenCV YuNet** | Yuzni aniqlash (Face Detection) | Apache 2.0 | Tasdiqlangan |
-| **OpenCV SFace** | Yuz embeddingi (128-d Face Recognition) | Apache 2.0 | Tasdiqlangan |
-| **MiniFASNet** | Anti-spoofing / Liveness tekshiruvi | Apache 2.0 | Tasdiqlangan |
-| **FastAPI** | REST API asosiy backend | MIT | Tasdiqlangan |
-| **SQLAlchemy** | Async ORM | MIT | Tasdiqlangan |
-| **PostgreSQL + pgvector** | RDBMS & Vektor qidiruvi | PostgreSQL / Apache 2.0 | Tasdiqlangan |
-| **go2rtc** | RTSP / WebRTC oqim shlyuzi | MIT | Tasdiqlangan |
-| **React, Vite, TypeScript** | Frontend platforma | MIT / Apache 2.0 | Tasdiqlangan |
-| **Tailwind CSS & Radix UI** | Dizayn tizimi komponentlari | MIT | Tasdiqlangan |
-| **Lucide React** | Ikonkalar to'plami | ISC / MIT | Tasdiqlangan |
+| **YuNet** | OpenCV Model Zoo (Detection & Landmarks) | **Apache 2.0** | Commercial use permitted. Redistribution with notice. |
+| **SFace** | OpenCV Model Zoo (128-d Feature Embedding) | **Apache 2.0** | Commercial use permitted. Pre-trained on clean datasets. |
+| **MiniFASNetV2** | Mini AI Live Anti-Spoofing | **Apache 2.0** | Commercial use permitted. ONNX mobile anti-spoofing. |
 
----
+## 2. Core Backend Dependencies
 
-## 2. Ishlatilishi TAQIQLANGAN Modellar va Sabablari
+| Library | License | Link / Notes |
+|---|---|---|
+| **FastAPI** | MIT License | High performance asynchronous web framework |
+| **PyJWT** | MIT License | Standard compliant RFC 7519 JSON Web Tokens |
+| **Argon2-cffi** | MIT License | IETF password hashing competition winner |
+| **SQLAlchemy** | MIT License | Modern Python SQL toolkit & ORM |
+| **pgvector** | PostgreSQL License | Vector similarity search for PostgreSQL |
+| **Cryptography** | Apache 2.0 / BSD | AES-256-GCM authenticated encryption |
+| **Caddy** | Apache 2.0 | Automated HTTPS edge ingress proxy |
 
-1. **InsightFace rasmiy modellari (`buffalo_l`, `buffalo_s`, `antelopev2`):**
-   - Kod qismi MIT bo'lsa-da, rasmiy pre-trained model og'irliklari **faqat nokommersial tadqiqotlar uchun** (Non-commercial research only). Maxsus tijorat litsenziyasi bo'lmasa, yopiq tijorat mahsulotiga kiritish taqiqlanadi.
-2. **Ultralytics YOLO (YOLOv8, YOLOv9, YOLOv11):**
-   - **AGPL-3.0** litsenziyasi ostida. Enterprise litsenziya sotib olinmasa, butun loyiha kodini ochiq qilishga majbur qiladi.
-   - Alternativa: RT-DETR yoki YOLOX (Apache 2.0).
-3. **BoxMOT:**
-   - **AGPL-3.0** litsenziyasi. Alternativa: ByteTrack (MIT) yoki Norfair.
+## 3. Uzbekistan Regulatory Compliance
+
+- **Law of the Republic of Uzbekistan on Personal Data (ZRU-547 / ZRU-1125, ZRU-1115)**:
+  - All biometric databases (`face_embeddings`, `attendance_events`, `unknown_faces`) reside on dedicated on-premise infrastructure inside the Republic of Uzbekistan.
+  - Zero biometric data, facial vectors, or video streams are routed through foreign cloud APIs or shared with external model providers.
+  - Biometric consent revocation triggers immediate, atomic, physical erasure of vectors and snapshots from persistent storage.

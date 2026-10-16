@@ -1,4 +1,8 @@
+# ==============================================================================
 # go2rtc Configuration for Workforce Vision Platform
+# Zero hardcoded passwords or static RTSP credentials.
+# All streams are registered and managed dynamically by core-api via REST API.
+# ==============================================================================
 log:
   level: info
 
@@ -11,12 +15,5 @@ rtsp:
 webrtc:
   listen: ":8555"
 
-streams:
-  entrance_main:
-    - rtsp://admin:admin123@192.168.1.10:554/Streaming/Channels/101
-  entrance_sub:
-    - rtsp://admin:admin123@192.168.1.10:554/Streaming/Channels/102
-  exit_main:
-    - rtsp://admin:admin123@192.168.1.11:554/Streaming/Channels/101
-  exit_sub:
-    - rtsp://admin:admin123@192.168.1.11:554/Streaming/Channels/102
+# Empty streams object: dynamically populated by core-api at runtime
+streams: {}

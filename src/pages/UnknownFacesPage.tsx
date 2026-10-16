@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, isMockMode } from '@/lib/api';
-import { mockApi } from '@/dev-mock/mockApi';
-import type { UnknownFace, Employee } from '@/types';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { api } from '@/lib/api';
+import type { UnknownFace } from '@/types';
 import { format } from 'date-fns';
 import { 
-  HelpCircle, Camera as CameraIcon, Link2, 
-  UserCheck, EyeOff, CheckCircle2, Clock 
+  Camera as CameraIcon, Link2, 
+  EyeOff, CheckCircle2, Clock 
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -19,8 +18,6 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 
-const getApiClient = () => (isMockMode() ? mockApi : api);
-
 export function UnknownFacesPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -30,17 +27,17 @@ export function UnknownFacesPage() {
 
   const { data: unknownFaces = [], isLoading } = useQuery({
     queryKey: ['unknownFaces'],
-    queryFn: () => getApiClient().getUnknownFaces(),
+    queryFn: () => api.getUnknownFaces(),
   });
 
   const { data: employees = [] } = useQuery({
     queryKey: ['employees'],
-    queryFn: () => getApiClient().getEmployees(),
+    queryFn: () => api.getEmployees(),
   });
 
   const handleResolve = async (id: string, action: 'link' | 'guest' | 'ignore', employeeId?: string) => {
     try {
-      await getApiClient().resolveUnknownFace(id, action, employeeId);
+      await api.resolveUnknownFace(id, action, employeeId);
       toast.success(
         action === 'link' 
           ? "Shaxs xodimga muvaffaqiyatli biriktirildi" 
@@ -51,8 +48,9 @@ export function UnknownFacesPage() {
       setSelectedFace(null);
       setSelectedEmployeeId('');
       queryClient.invalidateQueries({ queryKey: ['unknownFaces'] });
-    } catch {
-      toast.error('Amalni bajarishda xatolik yuz berdi');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Amalni bajarishda xatolik yuz berdi";
+      toast.error(msg);
     }
   };
 

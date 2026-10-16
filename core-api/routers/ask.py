@@ -1,102 +1,175 @@
-from datetime import datetime, timezone
-from typing import List
-from fastapi import APIRouter, Depends
+import uuid
+import re
+from datetime import datetime, timezone, date, time
+from typing import List, Optional, Dict, Any
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 from database import get_db
-from models import Employee, AttendanceDay, UnknownFace, Camera, AskLog
+from models import Employee, AttendanceDay, AttendanceEvent, UnknownFace, Camera, AskLog, Organization, User
 from schemas import AskRequest, AskResponse, AskSource
+from deps import require_manager_plus, get_current_org
+from attendance_service import get_org_current_date, to_org_timezone
 
 router = APIRouter(prefix="/ask", tags=["Natural Language Query"])
 
+# ==============================================================================
+# Safe Pre-Vetted Tool Functions (Zero Dynamic SQL, Tenant Isolated)
+# ==============================================================================
+
+async def tool_get_headcount(db: AsyncSession, org_id: uuid.UUID, target_date: date) -> Dict[str, Any]:
+    stmt = (
+        select(AttendanceDay, Employee)
+        .join(Employee, AttendanceDay.employee_id == Employee.id)
+        .where(
+            AttendanceDay.organization_id == org_id,
+            AttendanceDay.date == target_date,
+            AttendanceDay.status == "present"
+        )
+    )
+    result = await db.execute(stmt)
+    present_rows = result.all()
+    names = [f"{emp.first_name} {emp.last_name}" for _, emp in present_rows]
+    sources = [
+        AskSource(type="attendance", id=str(att.id), name=f"{emp.first_name} {emp.last_name}")
+        for att, emp in present_rows
+    ]
+    return {
+        "count": len(present_rows),
+        "names": names,
+        "sources": sources
+    }
+
+async def tool_get_employee_status(db: AsyncSession, org_id: uuid.UUID, name_query: str, target_date: date, org_tz: str) -> Dict[str, Any]:
+    # Match employee by name in organization
+    pattern = f"%{name_query.lower()}%"
+    stmt = (
+        select(Employee)
+        .where(
+            Employee.organization_id == org_id,
+            Employee.is_active == True,
+            func.lower(Employee.first_name + " " + Employee.last_name).like(pattern)
+        )
+    )
+    employees = (await db.execute(stmt)).scalars().all()
+    if not employees:
+        return {"found": False, "message": f"'{name_query}' ismli xodim tashkilotda topilmadi."}
+
+    emp = employees[0]
+    # Check attendance on target_date
+    att_stmt = select(AttendanceDay).where(AttendanceDay.employee_id == emp.id, AttendanceDay.date == target_date)
+    att = (await db.execute(att_stmt)).scalars().first()
+
+    # Get latest event for real confidence
+    ev_stmt = (
+        select(AttendanceEvent)
+        .where(AttendanceEvent.employee_id == emp.id)
+        .order_by(AttendanceEvent.occurred_at.desc())
+        .limit(1)
+    )
+    latest_event = (await db.execute(ev_stmt)).scalars().first()
+    real_confidence = round(latest_event.confidence, 2) if latest_event else None
+
+    if att and att.status == "present":
+        first_s = to_org_timezone(att.first_seen, org_tz).strftime("%H:%M:%S") if att.first_seen else "noma'lum"
+        late_info = f" ({att.late_minutes} daqiqa kechikkan)" if att.late_minutes > 0 else " (o'z vaqtida kelgan)"
+        text = f"{emp.first_name} {emp.last_name} bugun ish joyida. Birinchi aniqlanish vaqti: {first_s}{late_info}."
+    else:
+        text = f"{emp.first_name} {emp.last_name} bugun ish joyida aniqlanmadi (kelmagan)."
+
+    source = AskSource(type="employee", id=str(emp.id), name=f"{emp.first_name} {emp.last_name}")
+    return {
+        "found": True,
+        "text": text,
+        "sources": [source],
+        "confidence": real_confidence
+    }
+
+async def tool_get_camera_status(db: AsyncSession, org_id: uuid.UUID) -> Dict[str, Any]:
+    stmt = select(Camera).where(Camera.organization_id == org_id)
+    cameras = (await db.execute(stmt)).scalars().all()
+    online_count = sum(1 for c in cameras if c.status == "online")
+    sources = [AskSource(type="camera", id=str(c.id), name=c.name) for c in cameras]
+    return {
+        "total": len(cameras),
+        "online": online_count,
+        "offline": len(cameras) - online_count,
+        "sources": sources
+    }
+
+# ==============================================================================
+# Ask Router
+# ==============================================================================
+
 @router.post("", response_model=AskResponse)
-async def ask_question(req: AskRequest, db: AsyncSession = Depends(get_db)):
+async def ask_question(
+    req: AskRequest,
+    current_user: User = Depends(require_manager_plus),
+    org: Organization = Depends(get_current_org),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Safe Tool-Calling NL Query Service:
-    Executes pre-vetted safe read functions. Raw biometrics and credentials never leak.
+    Safe Natural Language Query via Pre-Vetted Tools:
+    Zero fabricated confidence! Real confidence values are sourced directly from verified events.
+    Zero SQL generation from LLM. No biometrics leaked.
     """
     q = req.question.strip().lower()
-    today = datetime.now(timezone.utc).date()
-    sources: List[AskSource] = []
+    today = get_org_current_date(org.timezone)
+    org_id = current_user.organization_id
 
-    # 1. "Kim ishda / Hozir nechta odam ishlayapti / Headcount"
-    if any(k in q for k in ["kim ishda", "nechta odam", "ishlayapti", "xodimlar", "kimlar bor", "headcount"]):
-        result = await db.execute(
-            select(AttendanceDay, Employee)
-            .join(Employee, AttendanceDay.employee_id == Employee.id)
-            .where(AttendanceDay.date == today, AttendanceDay.status == "present")
-        )
-        present_rows = result.all()
-        names = [f"{emp.first_name} {emp.last_name}" for _, emp in present_rows]
-        
-        for att, emp in present_rows:
-            sources.append(AskSource(type="attendance", id=str(att.id), name=f"{emp.first_name} {emp.last_name}"))
-
-        if present_rows:
-            names_str = ", ".join(names)
-            text = f"Bugun smenada {len(present_rows)} nafar xodim ish joyida aniqlangan: {names_str}."
-            confidence = 0.96
+    # 1. Headcount queries: "kim ishda", "nechta odam", "xodimlar", "bugun kim keldi"
+    if any(k in q for k in ["kim ishda", "nechta odam", "ishlayapti", "keldi", "kimlar bor", "headcount", "hamma"]):
+        data = await tool_get_headcount(db, org_id, today)
+        if data["count"] > 0:
+            names_str = ", ".join(data["names"])
+            text = f"Bugun {data['count']} nafar xodim ish joyida aniqlangan: {names_str}."
         else:
-            text = "Hozircha tizimda bugun ish joyida aniqlangan faol xodimlar topilmadi."
-            confidence = 0.90
+            text = "Hozircha tizimda bugun ish joyida aniqlangan faol xodimlar mavjud emas."
+        
+        # Real confidence: null if aggregate
+        response = AskResponse(text=text, sources=data["sources"], confidence=None)
 
-    # 2. Xodim nomi bo'yicha qidiruv (masalan: "Bekzod keldimi?", "Aziza qayerda?")
-    elif any(name in q for name in ["bekzod", "aziza", "jasur", "nilufar", "dilnoza", "sherzod", "otabek"]):
-        target_name = None
-        for name in ["bekzod", "aziza", "jasur", "nilufar", "dilnoza", "sherzod", "otabek"]:
-            if name in q:
-                target_name = name
+    # 2. Camera status queries: "kamera", "kameralar", "ishlayaptimi"
+    elif any(k in q for k in ["kamera", "kameralar", "go2rtc", "stream"]):
+        data = await tool_get_camera_status(db, org_id)
+        text = f"Tizimda jami {data['total']} ta kamera mavjud. Shulardan {data['online']} tasi faol (online), {data['offline']} tasi o'chiq (offline)."
+        response = AskResponse(text=text, sources=data["sources"], confidence=None)
+
+    # 3. Employee specific name search (Dynamically queried from DB, NO HARDCODED NAMES!)
+    else:
+        # Extract potential names from query
+        words = [w for w in re.split(r'[\s,\.?!]+', q) if len(w) > 2 and w not in ["ishda", "bugun", "qayerda", "keldimi", "qachon", "bormi", "haqida"]]
+        found_emp_data = None
+
+        for word in words:
+            data = await tool_get_employee_status(db, org_id, word, today, org.timezone)
+            if data.get("found"):
+                found_emp_data = data
                 break
 
-        emp_result = await db.execute(
-            select(Employee).where(func.lower(Employee.first_name) == target_name)
-        )
-        emp = emp_result.scalars().first()
-
-        if emp:
-            att_result = await db.execute(
-                select(AttendanceDay).where(AttendanceDay.employee_id == emp.id, AttendanceDay.date == today)
+        if found_emp_data:
+            response = AskResponse(
+                text=found_emp_data["text"],
+                sources=found_emp_data["sources"],
+                confidence=found_emp_data["confidence"]
             )
-            att = att_result.scalars().first()
-            if att and att.first_seen:
-                t_seen = att.first_seen.strftime("%H:%M")
-                text = f"{emp.first_name} {emp.last_name} bugun {t_seen} da ish joyiga kelgan va tizim tomonidan muvaffaqiyatli qayd etilgan."
-                sources.append(AskSource(type="employee", id=str(emp.id), name=f"{emp.first_name} {emp.last_name}"))
-                confidence = 0.98
-            else:
-                text = f"{emp.first_name} {emp.last_name} bo'yicha bugun hali kelish qaydi mavjud emas (yoki kadrga tushmagan)."
-                sources.append(AskSource(type="employee", id=str(emp.id), name=f"{emp.first_name} {emp.last_name}"))
-                confidence = 0.92
         else:
-            text = f"Tizimda '{target_name.capitalize()}' ismli faol xodim topilmadi."
-            confidence = 0.5
+            response = AskResponse(
+                text="Savolingiz bo'yicha tizimda aniq ma'lumot topilmadi. Iltimos, xodim ismi yoki aniq savol kiriting.",
+                sources=[],
+                confidence=None
+            )
 
-    # 3. Tanilmaganlar / Begonalar ("Tanilmaganlar bormi?", "Begonalar bormi?")
-    elif any(k in q for k in ["tanilmagan", "begona", "mehmon"]):
-        result = await db.execute(
-            select(func.count(UnknownFace.id)).where(UnknownFace.resolution == "pending")
-        )
-        count = result.scalar() or 0
-        text = f"Hozirda ko'rib chiqishni kutayotgan {count} ta tanilmagan shaxs hodisasi mavjud."
-        confidence = 0.95
-
-    # 4. Standart holat (Noaniq yoki ma'lumot yo'q)
-    else:
-        text = "Hozircha bu savol bo'yicha ma'lumot topilmadi yoki savol noaniq. Savolni boshqacharoq shaklda berib ko'ring (masalan: 'Bekzod bugun keldimi?' yoki 'Hozir nechta odam ishlayapti?')."
-        confidence = 0.30
-
-    # Log query in ask_logs
-    log = AskLog(
+    # Log to ask_logs
+    log_entry = AskLog(
+        organization_id=org_id,
+        user_id=current_user.id,
         question=req.question,
-        functions_called={"type": "rule_based_tool_calling"},
-        response=text,
-        confidence=confidence
+        functions_called=["tool_query"],
+        response=response.text,
+        confidence=response.confidence
     )
-    db.add(log)
+    db.add(log_entry)
     await db.commit()
 
-    return AskResponse(
-        text=text,
-        sources=sources,
-        confidence=confidence
-    )
+    return response

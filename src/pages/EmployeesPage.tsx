@@ -13,7 +13,7 @@ import {
   type Table,
 } from '@tanstack/react-table';
 import { motion } from 'motion/react';
-import { callApi } from '@/lib/apiFacade';
+import { api } from '@/lib/api';
 import type { Employee } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -46,7 +46,7 @@ export function EmployeesPage() {
 
   const { data: employees, isLoading, isError, refetch } = useQuery<Employee[]>({
     queryKey: ['employees'],
-    queryFn: () => callApi<Employee[]>((a) => a.getEmployees()),
+    queryFn: () => api.getEmployees(),
   });
 
   const columnHelper = createColumnHelper<Employee>();
@@ -183,7 +183,7 @@ export function EmployeesPage() {
         </div>
 
         <div className="flex rounded-control border border-line bg-surface p-0.5 shadow-xs">
-          {(['all', 'active', 'inactive'] as const).map((f, i) => (
+          {(['all', 'active', 'inactive'] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilterActive(f)}
@@ -274,7 +274,6 @@ export function EmployeesPage() {
 }
 
 function ColumnVisibility({ table }: { table: Table<Employee> }) {
-  const { t } = useTranslation();
   const hiddenCount = table.getAllColumns().filter((c) => !c.getIsVisible()).length;
 
   return (

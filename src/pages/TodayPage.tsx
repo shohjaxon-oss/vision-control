@@ -1,14 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { api, isMockMode } from '@/lib/api';
-import { mockApi } from '@/dev-mock/mockApi';
-import type { AttendanceRecord, TimelineEvent } from '@/types';
+import { api } from '@/lib/api';
+import type { TimelineEvent } from '@/types';
 import { format } from 'date-fns';
 import { 
-  Users, UserCheck, UserX, Clock, 
+  Clock, 
   Camera as CameraIcon, CheckCircle2, XCircle, 
-  ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Sparkles
+  ZoomIn, ZoomOut
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -20,24 +19,23 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 
-const getApiClient = () => (isMockMode() ? mockApi : api);
-
 export function TodayPage() {
   const { t } = useTranslation();
-  const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
+  const [selectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
   const [isEvidenceOpen, setIsEvidenceOpen] = useState(false);
-  const [feedbackGiven, setFeedbackGiven] = useState<Record<string, boolean>>({});
+  const [snapshotBlobUrl, setSnapshotBlobUrl] = useState<string | null>(null);
+  const [loadingSnapshot, setLoadingSnapshot] = useState(false);
 
   const { data: attendance = [], isLoading } = useQuery({
     queryKey: ['attendance', selectedDate],
-    queryFn: () => getApiClient().getAttendance(selectedDate),
+    queryFn: () => api.getAttendance(selectedDate),
   });
 
   const { data: employees = [] } = useQuery({
     queryKey: ['employees'],
-    queryFn: () => getApiClient().getEmployees(),
+    queryFn: () => api.getEmployees(),
   });
 
   // Calculate Headcount Stats
@@ -48,17 +46,32 @@ export function TodayPage() {
   // Time axis labels: 08:00 to 20:00
   const hours = Array.from({ length: 13 }, (_, i) => i + 8);
 
-  const handleEventClick = (event: TimelineEvent) => {
+  useEffect(() => {
+    if (!isEvidenceOpen && snapshotBlobUrl) {
+      URL.revokeObjectURL(snapshotBlobUrl);
+      setSnapshotBlobUrl(null);
+    }
+  }, [isEvidenceOpen, snapshotBlobUrl]);
+
+  const handleEventClick = async (event: TimelineEvent) => {
     setSelectedEvent(event);
     setIsEvidenceOpen(true);
+    setLoadingSnapshot(true);
+    try {
+      const blobUrl = await api.getEventSnapshot(event.id);
+      setSnapshotBlobUrl(blobUrl);
+    } catch {
+      setSnapshotBlobUrl(null);
+    } finally {
+      setLoadingSnapshot(false);
+    }
   };
 
   const handleFeedback = async (correct: boolean) => {
     if (!selectedEvent) return;
     try {
-      await getApiClient().submitFeedback(selectedEvent.id, correct);
-      setFeedbackGiven((prev) => ({ ...prev, [selectedEvent.id]: correct }));
-      toast.success(correct ? "Baholash qabul qilindi: To'g'ri" : "Baholash qabul qilindi: Noto'g'ri (model sozlanadi)");
+      await api.submitFeedback(selectedEvent.id, correct);
+      toast.success(correct ? "Baholash qabul qilindi: To'g'ri" : "Baholash qabul qilindi: Noto'g'ri");
       setIsEvidenceOpen(false);
     } catch {
       toast.error('Fikr-mulohazani saqlashda xatolik yuz berdi');
@@ -168,7 +181,7 @@ export function TodayPage() {
 
             {/* Employee Timeline Rows */}
             <div className="space-y-4">
-              {employees.slice(0, 6).map((emp, index) => {
+              {employees.slice(0, 6).map((emp) => {
                 const att = attendance.find((a) => a.employee_id === emp.id);
                 const isPresent = att?.status === 'present';
                 const isMissing = att?.status === 'missing';
@@ -267,12 +280,21 @@ export function TodayPage() {
             <div className="space-y-4 py-2">
               {/* Snapshot Simulation Frame */}
               <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-surface border border-line flex items-center justify-center">
-                <div className="text-center p-4">
-                  <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-slate-200 text-ink">
-                    <CameraIcon size={24} strokeWidth={1.5} />
+                {snapshotBlobUrl ? (
+                  <img src={snapshotBlobUrl} alt="Snapshot dalili" className="h-full w-full object-cover" />
+                ) : loadingSnapshot ? (
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-900 border-t-transparent" />
+                    <span className="text-xs text-text2">Snapshot yuklanmoqda...</span>
                   </div>
-                  <span className="text-xs font-mono font-medium text-text2">Kamera oqimi: {selectedEvent.camera_name}</span>
-                </div>
+                ) : (
+                  <div className="text-center p-4">
+                    <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-slate-200 text-ink">
+                      <CameraIcon size={24} strokeWidth={1.5} />
+                    </div>
+                    <span className="text-xs font-mono font-medium text-text2">Kamera oqimi: {selectedEvent.camera_name}</span>
+                  </div>
+                )}
 
                 {/* Bounding Box Visual Overlay */}
                 <div className="absolute inset-x-1/4 inset-y-1/6 rounded border border-ink/40 pointer-events-none">

@@ -1,41 +1,112 @@
 import os
+import time
 import base64
+import hmac
+import hashlib
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Any
-from passlib.context import CryptContext
-from jose import jwt, JWTError
+from typing import Optional, Any, Dict
+import jwt
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError, InvalidHash
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import pyotp
 from config import settings
+from errors import AppException
 
-pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+# Argon2id password hasher
+ph = PasswordHasher(
+    time_cost=2,
+    memory_cost=65536, # 64MB
+    parallelism=2,
+    hash_len=32,
+    salt_len=16
+)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return ph.verify(hashed_password, plain_password)
+    except (VerifyMismatchError, InvalidHash):
+        return False
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    return ph.hash(password)
 
-def create_access_token(subject: str | Any, role: str, expires_delta: Optional[timedelta] = None) -> str:
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode = {"exp": expire, "sub": str(subject), "role": role, "type": "access"}
-    return jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+def create_access_token(user_id: str, role: str, org_id: str) -> str:
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    payload = {
+        "sub": str(user_id),
+        "role": role,
+        "org_id": str(org_id),
+        "typ": "access",
+        "aud": "wfv-api",
+        "iat": int(now.timestamp()),
+        "exp": int(expire.timestamp())
+    }
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
-def create_refresh_token(subject: str | Any) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode = {"exp": expire, "sub": str(subject), "type": "refresh"}
-    return jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+def create_2fa_challenge_token(user_id: str, org_id: str) -> str:
+    """Short-lived 5-minute token strictly for completing 2FA."""
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=settings.CHALLENGE_TOKEN_EXPIRE_MINUTES)
+    payload = {
+        "sub": str(user_id),
+        "org_id": str(org_id),
+        "typ": "challenge",
+        "aud": "wfv-2fa",
+        "iat": int(now.timestamp()),
+        "exp": int(expire.timestamp())
+    }
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
-def decode_token(token: str) -> dict:
-    return jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+def create_live_ticket(camera_id: str, org_id: str, user_id: str) -> str:
+    """Single-use 30-second ticket strictly for authenticated camera WebRTC/MSE stream."""
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(seconds=settings.LIVE_TICKET_EXPIRE_SECONDS)
+    payload = {
+        "sub": str(user_id),
+        "cam": str(camera_id),
+        "org_id": str(org_id),
+        "typ": "live",
+        "aud": "wfv-live",
+        "jti": base64.urlsafe_b64encode(os.urandom(16)).decode('utf-8').rstrip('='),
+        "iat": int(now.timestamp()),
+        "exp": int(expire.timestamp())
+    }
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
-# AES-256-GCM Encryption / Decryption for sensitive fields
+def decode_token(token: str, expected_typ: str, expected_aud: str) -> Dict[str, Any]:
+    try:
+        payload = jwt.decode(
+            token,
+            settings.JWT_SECRET,
+            algorithms=[settings.JWT_ALGORITHM],
+            audience=expected_aud,
+            options={"require": ["exp", "sub", "typ", "aud"]}
+        )
+        if payload.get("typ") != expected_typ:
+            raise AppException(
+                status_code=401,
+                code="invalid_token_type",
+                message="Token turi yaroqsiz"
+            )
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise AppException(
+            status_code=401,
+            code="token_expired",
+            message="Sessiya muddati tugagan. Qaytadan tizimga kiring."
+        )
+    except jwt.InvalidTokenError as e:
+        raise AppException(
+            status_code=401,
+            code="invalid_token",
+            message="Noto'g'ri yoki buzilgan avtorizatsiya tokeni"
+        )
+
+# AES-256-GCM Encryption / Decryption
 def get_aes_key() -> bytes:
-    key_hex = settings.AES_ENCRYPTION_KEY
-    return bytes.fromhex(key_hex)
+    return bytes.fromhex(settings.AES_ENCRYPTION_KEY)
 
 def encrypt_data(plaintext: str) -> str:
     aesgcm = AESGCM(get_aes_key())
@@ -51,7 +122,42 @@ def decrypt_data(ciphertext_b64: str) -> str:
     decrypted = aesgcm.decrypt(nonce, ciphertext, None)
     return decrypted.decode('utf-8')
 
-# 2FA TOTP verification
-def verify_totp(secret: str, code: str) -> bool:
+# TOTP 2FA
+def generate_totp_secret() -> str:
+    return pyotp.random_base32()
+
+def get_totp_uri(secret: str, email: str, issuer: str = "VisionControl") -> str:
     totp = pyotp.TOTP(secret)
-    return totp.verify(code, valid_window=1)
+    return totp.provisioning_uri(name=email, issuer_name=issuer)
+
+def verify_totp(secret: str, code: str) -> bool:
+    if not secret or not code:
+        return False
+    # Remove any spaces
+    cleaned = code.strip().replace(" ", "")
+    totp = pyotp.TOTP(secret)
+    return totp.verify(cleaned, valid_window=1)
+
+# HMAC service-to-service authentication (vision-worker -> core-api)
+def generate_service_signature(method: str, path: str, timestamp: int, body_bytes: bytes = b"") -> str:
+    key = settings.INTERNAL_SERVICE_SECRET.encode('utf-8')
+    body_hash = hashlib.sha256(body_bytes).hexdigest()
+    msg = f"{method.upper()}|{path}|{timestamp}|{body_hash}".encode('utf-8')
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+def verify_service_signature(method: str, path: str, timestamp_str: str, signature: str, body_bytes: bytes = b"") -> bool:
+    try:
+        ts = int(timestamp_str)
+    except (ValueError, TypeError):
+        return False
+    # 60 seconds tolerance window to prevent replay attacks
+    now = int(time.time())
+    if abs(now - ts) > 60:
+        return False
+    expected = generate_service_signature(method, path, ts, body_bytes)
+    return hmac.compare_digest(expected, signature)
+
+# Chained hash computation for immutable audit logs
+def compute_audit_hash(prev_hash: Optional[str], row_data: str) -> str:
+    raw = f"{prev_hash or 'GENESIS'}|{row_data}".encode('utf-8')
+    return hashlib.sha256(raw).hexdigest()

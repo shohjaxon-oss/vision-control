@@ -1,19 +1,24 @@
 import { useState, useEffect } from 'react';
-import { Outlet } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { CommandPalette } from '@/components/CommandPalette';
 import { AskDrawer } from '@/components/AskDrawer';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
-import { isMockMode } from '@/lib/api';
-import { AlertTriangle } from 'lucide-react';
 
 export function AppLayout() {
-  const { t } = useTranslation();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [isAskOpen, setIsAskOpen] = useState(false);
-  const mockMode = isMockMode() && import.meta.env.DEV;
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // If user hits /ask route, open drawer and reset path to /
+  useEffect(() => {
+    if (location.pathname === '/ask') {
+      setIsAskOpen(true);
+      navigate('/', { replace: true });
+    }
+  }, [location.pathname, navigate]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -46,12 +51,6 @@ export function AppLayout() {
           onMenuClick={() => setMobileNavOpen(true)}
           onAskClick={() => setIsAskOpen(true)}
         />
-        {mockMode && (
-          <div className="flex items-center gap-2 bg-yellow-50 px-4 py-1.5 text-xs text-yellow-800 border-b border-yellow-200">
-            <AlertTriangle size={14} strokeWidth={1.5} />
-            {t('mock.banner')}
-          </div>
-        )}
         <main className="flex-1 overflow-y-auto">
           <Outlet />
         </main>

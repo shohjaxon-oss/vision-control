@@ -1,13 +1,11 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { api, isMockMode } from '@/lib/api';
-import { mockApi } from '@/dev-mock/mockApi';
+import { api } from '@/lib/api';
 import type { Camera } from '@/types';
-import { format } from 'date-fns';
 import { 
-  Building, Camera as CameraIcon, Eye, Activity, 
-  RotateCcw, ShieldCheck, Layers, Info 
+  Camera as CameraIcon, 
+  Info, ZoomIn, ZoomOut, RotateCw
 } from 'lucide-react';
 import {
   Sheet,
@@ -17,27 +15,41 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet';
 
-const getApiClient = () => (isMockMode() ? mockApi : api);
-
 export function ObjectPage() {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [selectedCamera, setSelectedCamera] = useState<Camera | null>(null);
-  const [rotationAngle, setRotationAngle] = useState(45);
+  const [rotationAngle, setRotationAngle] = useState(0);
   const [zoom, setZoom] = useState(1);
 
-  const { data: cameras = [], isLoading } = useQuery({
+  const { data: cameras = [] } = useQuery({
     queryKey: ['cameras'],
-    queryFn: () => getApiClient().getCameras(),
+    queryFn: () => api.getCameras(),
   });
 
-  // Camera Spatial Coordinates on Building Model
-  const cameraNodes = [
-    { id: 'cam-001', x: 260, y: 320, z: 20, angle: 45, range: 70, name: 'Bosh kirish' },
-    { id: 'cam-002', x: 540, y: 310, z: 20, angle: 135, range: 65, name: 'Chiqish eshigi' },
-    { id: 'cam-003', x: 380, y: 220, z: 80, angle: 90, range: 90, name: 'Sotuv zali' },
-    { id: 'cam-004', x: 490, y: 160, z: 80, angle: 220, range: 60, name: 'Ombor' },
-  ];
+  // Dynamically map cameras from API with their 3D positions
+  const cameraNodes = useMemo(() => {
+    return cameras.map((c, idx) => {
+      const defaultPositions = [
+        { x: 260, y: 320, z: 20, angle: 45, range: 70 },
+        { x: 540, y: 310, z: 20, angle: 135, range: 65 },
+        { x: 380, y: 220, z: 80, angle: 90, range: 90 },
+        { x: 490, y: 160, z: 80, angle: 220, range: 60 },
+      ];
+      const fallback = defaultPositions[idx % defaultPositions.length];
+      return {
+        id: c.id,
+        name: c.name,
+        type: c.type,
+        status: c.status,
+        x: c.position?.x && c.position.x > 0 ? c.position.x : fallback.x,
+        y: c.position?.y && c.position.y > 0 ? c.position.y : fallback.y,
+        angle: c.position?.yaw || fallback.angle,
+        range: c.position?.fov || fallback.range,
+        raw: c,
+      };
+    });
+  }, [cameras]);
 
   // Render 2.5D / Isometric Canvas with Building Wireframe & Cones
   useEffect(() => {
@@ -54,95 +66,89 @@ export function ObjectPage() {
     ctx.save();
     ctx.translate(width / 2, height / 2);
     ctx.scale(zoom, zoom);
+    ctx.rotate((rotationAngle * Math.PI) / 180);
     ctx.translate(-width / 2, -height / 2);
 
     // 1. Draw Grid Base
-    ctx.strokeStyle = '#E4E4E4';
+    ctx.strokeStyle = '#E2E8F0';
     ctx.lineWidth = 1;
-    for (let x = 100; x <= 700; x += 40) {
+    for (let x = 50; x < width; x += 40) {
       ctx.beginPath();
-      ctx.moveTo(x, 100);
-      ctx.lineTo(x, 500);
+      ctx.moveTo(x, 50);
+      ctx.lineTo(x, height - 50);
       ctx.stroke();
     }
-    for (let y = 100; y <= 500; y += 40) {
+    for (let y = 50; y < height; y += 40) {
       ctx.beginPath();
-      ctx.moveTo(100, y);
-      ctx.lineTo(700, y);
+      ctx.moveTo(50, y);
+      ctx.lineTo(width - 50, y);
       ctx.stroke();
     }
 
-    // 2. Draw Isometric Building Blocks (Floor 1 & Floor 2)
-    // Ground Floor: Main Hall & Entrance
-    ctx.fillStyle = '#F8FAFC';
-    ctx.strokeStyle = '#334155';
+    // 2. Draw Floor Plan (Clean Architectural Wireframe)
+    ctx.strokeStyle = '#0F172A';
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(150, 100, 500, 300);
+
+    // Interior walls & rooms
     ctx.lineWidth = 1.5;
-
-    // Room 1: Entrance Lobby
     ctx.beginPath();
-    ctx.rect(200, 240, 180, 140);
-    ctx.fill();
-    ctx.stroke();
-
-    // Room 2: Main Sales Floor
-    ctx.beginPath();
-    ctx.rect(380, 180, 240, 200);
-    ctx.fill();
-    ctx.stroke();
-
-    // Room 3: Warehouse / Back office
-    ctx.beginPath();
-    ctx.rect(460, 120, 160, 80);
-    ctx.fill();
+    ctx.moveTo(350, 100);
+    ctx.lineTo(350, 400);
+    ctx.moveTo(150, 250);
+    ctx.lineTo(350, 250);
     ctx.stroke();
 
     // Room Labels
-    ctx.fillStyle = '#334155';
-    ctx.font = 'bold 11px sans-serif';
-    ctx.fillText('1-ZAL (KIRISH)', 220, 260);
-    ctx.fillText('2-ZAL (SOTUV)', 400, 205);
-    ctx.fillText('OMBORXONA', 475, 145);
+    ctx.fillStyle = '#64748B';
+    ctx.font = '600 11px sans-serif';
+    ctx.fillText('KIRISH ZONASI (A)', 170, 130);
+    ctx.fillText('OMBOR (B)', 170, 280);
+    ctx.fillText('ASOSIY ZAL & OFIS (C)', 370, 130);
 
-    // 3. Draw Cameras and Vision Cones
-    cameraNodes.forEach((node) => {
-      const cam = cameras.find((c) => c.id === node.id);
-      const isOnline = cam ? cam.status === 'online' : true;
+    // 3. Draw Camera Nodes & Vision FOV Cones
+    cameraNodes.forEach((cam) => {
+      const isOnline = cam.status === 'online';
 
-      // Draw Vision Cone
+      // FOV Arc / Cone
+      const rad = (cam.angle * Math.PI) / 180;
+      const fovRad = (cam.range * Math.PI) / 180;
+
       ctx.save();
-      ctx.translate(node.x, node.y);
-      const rad = (node.angle * Math.PI) / 180;
-      ctx.rotate(rad);
+      ctx.translate(cam.x, cam.y);
 
+      // Vision Coverage Gradient Cone
       ctx.beginPath();
       ctx.moveTo(0, 0);
-      ctx.arc(0, 0, node.range, -0.4, 0.4);
+      ctx.arc(0, 0, 90, rad - fovRad / 2, rad + fovRad / 2);
       ctx.closePath();
-      ctx.fillStyle = isOnline ? 'rgba(15, 23, 42, 0.08)' : 'rgba(100, 116, 139, 0.05)';
+
+      ctx.fillStyle = isOnline ? 'rgba(15, 23, 42, 0.08)' : 'rgba(100, 116, 139, 0.04)';
       ctx.fill();
-      ctx.strokeStyle = isOnline ? 'rgba(15, 23, 42, 0.4)' : 'rgba(100, 116, 139, 0.25)';
+
+      ctx.strokeStyle = isOnline ? '#0F172A' : '#94A3B8';
       ctx.lineWidth = 1;
       ctx.stroke();
 
-      ctx.restore();
-
-      // Draw Camera Body
+      // Camera Dot Marker
       ctx.beginPath();
-      ctx.arc(node.x, node.y, 6, 0, Math.PI * 2);
-      ctx.fillStyle = isOnline ? '#0F172A' : '#64748B';
+      ctx.arc(0, 0, 7, 0, Math.PI * 2);
+      ctx.fillStyle = isOnline ? '#0F172A' : '#94A3B8';
       ctx.fill();
       ctx.strokeStyle = '#FFFFFF';
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      // Camera label badge
-      ctx.fillStyle = isOnline ? '#0F172A' : '#64748B';
+      ctx.restore();
+
+      // Camera Name Tag
+      ctx.fillStyle = '#0F172A';
       ctx.font = 'bold 10px sans-serif';
-      ctx.fillText(node.name, node.x - 20, node.y - 12);
+      ctx.fillText(cam.name, cam.x - 20, cam.y - 12);
     });
 
     ctx.restore();
-  }, [cameras, zoom, rotationAngle]);
+  }, [cameraNodes, rotationAngle, zoom]);
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -151,140 +157,124 @@ export function ObjectPage() {
     const clickX = (e.clientX - rect.left) / zoom;
     const clickY = (e.clientY - rect.top) / zoom;
 
-    // Check hit test for camera nodes
-    for (const node of cameraNodes) {
-      const dist = Math.hypot(node.x - clickX, node.y - clickY);
-      if (dist <= 25) {
-        const cam = cameras.find((c) => c.id === node.id) || {
-          id: node.id,
-          name: node.name,
-          type: 'general' as const,
-          status: 'online' as const,
-          fps: 25,
-          latency_ms: 45,
-          last_frame_at: new Date().toISOString(),
-          rtsp_address: 'rtsp://192.168.1.10:554/stream1',
-          organization_id: 'org-001'
-        };
-        setSelectedCamera(cam);
-        return;
-      }
+    // Check hit radius
+    const hit = cameraNodes.find(
+      (c) => Math.hypot(c.x - clickX, c.y - clickY) < 25
+    );
+
+    if (hit) {
+      setSelectedCamera(hit.raw);
     }
   };
 
   return (
     <div className="space-y-6 p-6">
-      {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-ink">{t('nav.object')}</h1>
-          <p className="text-sm text-muted">
-            Bino izometrik 3D xaritasi va kameralarning fazoviy ko'rish konuslari
+          <h1 className="text-2xl font-bold tracking-tight text-ink">{t('nav.object')}</h1>
+          <p className="text-sm font-medium text-muted">
+            Binoning me'moriy xaritasi va kameralar ko'rish burchagi (FOV)
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setZoom((z) => Math.max(0.7, z - 0.15))}
-            className="rounded-md border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-line/50 transition-colors"
+            onClick={() => setRotationAngle((r) => (r + 45) % 360)}
+            className="inline-flex h-9 items-center gap-1.5 px-3 rounded-md border border-line bg-surface text-ink hover:bg-surface-hover transition-colors text-xs font-semibold shadow-xs"
+            title="Aylantirish"
           >
-            Kichiklashtirish
+            <RotateCw size={14} />
+            {rotationAngle}°
           </button>
+
           <button
-            onClick={() => setZoom(1)}
-            className="rounded-md border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-line/50 transition-colors"
+            onClick={() => setZoom((z) => Math.max(0.6, z - 0.2))}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-line bg-surface text-ink hover:bg-surface-hover transition-colors shadow-xs"
+            title="Kichiklashtirish"
           >
-            100%
+            <ZoomOut size={16} />
           </button>
+          <span className="text-xs font-mono font-bold tabular-nums text-text2 px-1">{Math.round(zoom * 100)}%</span>
           <button
-            onClick={() => setZoom((z) => Math.min(1.6, z + 0.15))}
-            className="rounded-md border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-line/50 transition-colors"
+            onClick={() => setZoom((z) => Math.min(2.0, z + 0.2))}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-line bg-surface text-ink hover:bg-surface-hover transition-colors shadow-xs"
+            title="Kattalashtirish"
           >
-            Kattalashtirish
+            <ZoomIn size={16} />
           </button>
         </div>
       </div>
 
-      {/* 3D Map Container */}
-      <div className="relative rounded-2xl border border-line bg-white shadow-sm overflow-hidden flex flex-col items-center justify-center p-4">
-        {/* Helper Badge */}
-        <div className="absolute top-4 left-4 z-10 flex items-center gap-2 rounded-lg border border-line bg-white/95 backdrop-blur-sm px-3.5 py-2 text-xs text-text2 font-medium shadow-xs">
-          <Info size={14} className="text-ink" />
-          <span>Kamerani tekshirish uchun ustiga bosing</span>
-        </div>
-
-        {/* Legend */}
-        <div className="absolute top-4 right-4 z-10 flex items-center gap-4 rounded-lg border border-line bg-white/95 backdrop-blur-sm px-3.5 py-2 text-xs shadow-xs">
-          <div className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-ink" />
-            <span className="text-ink font-semibold">Online kamera</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-slate-400" />
-            <span className="text-text2 font-medium">Offline kamera</span>
-          </div>
-        </div>
-
-        {/* Isometric Canvas */}
+      {/* Main Architectural Canvas */}
+      <div className="relative rounded-2xl border border-line bg-white shadow-xs overflow-hidden flex items-center justify-center p-4">
         <canvas
           ref={canvasRef}
           width={800}
-          height={540}
+          height={500}
           onClick={handleCanvasClick}
           className="cursor-crosshair max-w-full h-auto"
         />
+
+        <div className="absolute bottom-4 left-4 rounded-lg border border-line bg-white/90 backdrop-blur-xs p-3 text-xs space-y-1.5 shadow-xs">
+          <span className="font-bold text-ink block mb-1">Xarita belgilari:</span>
+          <div className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-full bg-slate-900" />
+            <span className="text-text2 font-medium">Faol kamera (Online FOV)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-full bg-slate-400" />
+            <span className="text-text2 font-medium">O'chiq kamera (Offline)</span>
+          </div>
+        </div>
       </div>
 
-      {/* Selected Camera Inspect Sheet */}
-      <Sheet open={!!selectedCamera} onOpenChange={() => setSelectedCamera(null)}>
-        <SheetContent side="right" className="w-80 sm:w-96 border-l border-line p-6">
+      {/* Camera Detail Sheet */}
+      <Sheet open={!!selectedCamera} onOpenChange={(open) => !open && setSelectedCamera(null)}>
+        <SheetContent className="sm:max-w-md bg-white border-l border-line p-6">
           <SheetHeader>
-            <SheetTitle className="text-lg font-semibold text-ink flex items-center gap-2">
-              <CameraIcon size={18} strokeWidth={1.5} />
+            <SheetTitle className="text-lg font-bold text-ink flex items-center gap-2">
+              <CameraIcon size={20} />
               {selectedCamera?.name}
             </SheetTitle>
             <SheetDescription className="text-xs text-muted">
-              Fazoviy joylashuv va jonli ko'rish oqimi
+              Kameraning real vaqt holati va fazoviy parametrlari
             </SheetDescription>
           </SheetHeader>
 
           {selectedCamera && (
-            <div className="space-y-5 py-6">
-              {/* Mini Video Feed */}
-              <div className="relative aspect-video w-full rounded-xl bg-surface border border-line flex items-center justify-center overflow-hidden">
-                <div className="text-center text-text2">
-                  <CameraIcon size={32} className="mx-auto mb-1 animate-pulse text-ink" strokeWidth={1.5} />
-                  <span className="text-xs font-mono font-medium">go2rtc WebRTC oqimi</span>
+            <div className="mt-6 space-y-4 text-xs font-medium">
+              <div className="rounded-lg border border-line p-3 bg-surface space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-muted">Holat:</span>
+                  <span className={`font-bold ${selectedCamera.status === 'online' ? 'text-emerald-700' : 'text-slate-500'}`}>
+                    {selectedCamera.status.toUpperCase()}
+                  </span>
                 </div>
-                <div className="absolute top-2 left-2 rounded bg-ink/80 px-2 py-0.5 text-[10px] font-mono text-white">
-                  JONLI
+                <div className="flex justify-between">
+                  <span className="text-muted">Turi:</span>
+                  <span className="font-semibold text-ink uppercase">{selectedCamera.type}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted">FPS / Kechikish:</span>
+                  <span className="font-mono text-ink">{selectedCamera.fps} FPS · {selectedCamera.latency_ms} ms</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted">RTSP:</span>
+                  <span className="font-mono text-slate-700 truncate max-w-[200px]">
+                    {selectedCamera.rtsp_masked || selectedCamera.rtsp_address}
+                  </span>
                 </div>
               </div>
 
-              {/* Status details */}
-              <div className="space-y-2.5 text-xs">
-                <div className="flex items-center justify-between border-b border-line pb-2">
-                  <span className="text-text2 font-semibold">Holati</span>
-                  <span className="flex items-center gap-1.5 font-semibold text-ink">
-                    <span className={`h-2.5 w-2.5 rounded-full ${selectedCamera.status === 'online' ? 'bg-[#16A34A] ring-4 ring-green-100' : 'bg-[#DC2626] ring-4 ring-red-100'}`} />
-                    {selectedCamera.status === 'online' ? 'Online' : 'Offline'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between border-b border-line pb-2">
-                  <span className="text-text2 font-semibold">Kamera turi</span>
-                  <span className="font-mono uppercase font-semibold text-ink">{selectedCamera.type}</span>
-                </div>
-                <div className="flex items-center justify-between border-b border-line pb-2">
-                  <span className="text-text2 font-semibold">Kadrlar tezligi</span>
-                  <span className="font-mono font-semibold text-ink tabular-nums">{selectedCamera.fps} FPS</span>
-                </div>
-                <div className="flex items-center justify-between border-b border-line pb-2">
-                  <span className="text-text2 font-semibold">Tarmoq kechikishi</span>
-                  <span className="font-mono font-semibold text-ink tabular-nums">{selectedCamera.latency_ms} ms</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-text2 font-semibold">Protokol</span>
-                  <span className="font-mono font-semibold text-ink">RTSP / H.264</span>
+              <div className="rounded-lg border border-line p-3 bg-white space-y-2">
+                <span className="font-bold text-ink flex items-center gap-1.5">
+                  <Info size={14} /> Koordinatalar & FOV
+                </span>
+                <div className="grid grid-cols-2 gap-2 font-mono text-[11px] text-text2 pt-1">
+                  <div>X: {selectedCamera.position?.x || 260}px</div>
+                  <div>Y: {selectedCamera.position?.y || 320}px</div>
+                  <div>Burchak: {selectedCamera.position?.yaw || 45}°</div>
+                  <div>Qamrov (FOV): {selectedCamera.position?.fov || 70}°</div>
                 </div>
               </div>
             </div>

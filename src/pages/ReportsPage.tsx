@@ -1,13 +1,10 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { api, isMockMode } from '@/lib/api';
-import { mockApi } from '@/dev-mock/mockApi';
+import { api } from '@/lib/api';
 import { format, subDays } from 'date-fns';
-import { Download, Printer, Calendar as CalendarIcon, FileSpreadsheet, Filter } from 'lucide-react';
+import { Download, Printer, Calendar as CalendarIcon } from 'lucide-react';
 import { toast } from 'sonner';
-
-const getApiClient = () => (isMockMode() ? mockApi : api);
 
 interface ReportRow {
   id: string;
@@ -29,35 +26,24 @@ export function ReportsPage() {
 
   const { data: records = [], isLoading } = useQuery<ReportRow[]>({
     queryKey: ['report', fromDate, toDate],
-    queryFn: () => getApiClient().getReport(fromDate, toDate, 'json') as Promise<ReportRow[]>,
+    queryFn: () => api.getReportJson(fromDate, toDate) as Promise<ReportRow[]>,
   });
 
-  const handleDownloadCSV = () => {
-    if (records.length === 0) {
-      toast.error('Yuklab olish uchun ma\'lumot yo\'q');
-      return;
+  const handleDownloadCSV = async () => {
+    try {
+      const blob = await api.getReportCsv(fromDate, toDate);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `davomat_hisoboti_${fromDate}_${toDate}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success('CSV hisoboti muvaffaqiyatli yuklab olindi');
+    } catch {
+      toast.error('CSV hisobotini yuklashda xatolik yuz berdi');
     }
-    const headers = ['Xodim ID', 'Ism Familiya', 'Sana', 'Kelgan vaqti', 'Ketgan vaqti', 'Holati', 'Kechikish (daq)', 'Jami vaqt (daq)'];
-    const rows = records.map((r: ReportRow) => [
-      r.employee_id,
-      `"${r.employee_name}"`,
-      r.date,
-      r.first_seen ? format(new Date(r.first_seen), 'HH:mm') : '-',
-      r.last_seen ? format(new Date(r.last_seen), 'HH:mm') : '-',
-      r.status === 'present' ? 'Ishda' : r.status === 'missing' ? 'Ko\'rinmadi' : 'Kelmagan',
-      r.late_minutes,
-      r.total_present_minutes,
-    ]);
-
-    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map((e: (string | number)[]) => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `davomat_hisoboti_${fromDate}_${toDate}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    toast.success('CSV fayli yuklab olindi');
   };
 
   const handlePrint = () => {
@@ -181,7 +167,7 @@ export function ReportsPage() {
                   <td colSpan={7} className="py-8 text-center text-text2 font-medium">Belgilangan oraliqda ma'lumot topilmadi</td>
                 </tr>
               ) : (
-                records.map((r: any) => (
+                records.map((r: ReportRow) => (
                   <tr key={r.id} className="hover:bg-surface-hover/70 transition-colors">
                     <td className="py-3 px-4 font-semibold text-ink print:text-black">
                       {r.employee_name}

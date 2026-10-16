@@ -11,19 +11,24 @@ import {
   Eye,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/contexts/AuthContext';
 
 const navItems = [
-  { to: '/', icon: LayoutGrid, key: 'nav.today' },
-  { to: '/employees', icon: Users, key: 'nav.employees' },
-  { to: '/cameras', icon: Camera, key: 'nav.cameras' },
-  { to: '/object', icon: Building2, key: 'nav.object' },
-  { to: '/unknown', icon: UserX, key: 'nav.unknown' },
-  { to: '/reports', icon: FileText, key: 'nav.reports' },
-  { to: '/settings', icon: Settings, key: 'nav.settings' },
+  { to: '/', icon: LayoutGrid, key: 'nav.today', roles: ['owner', 'manager', 'observer'] },
+  { to: '/employees', icon: Users, key: 'nav.employees', roles: ['owner', 'manager', 'observer'] },
+  { to: '/cameras', icon: Camera, key: 'nav.cameras', roles: ['owner', 'manager', 'observer'] },
+  { to: '/object', icon: Building2, key: 'nav.object', roles: ['owner', 'manager', 'observer'] },
+  { to: '/unknown', icon: UserX, key: 'nav.unknown', roles: ['owner', 'manager', 'observer'] },
+  { to: '/reports', icon: FileText, key: 'nav.reports', roles: ['owner', 'manager', 'observer'] },
+  { to: '/settings', icon: Settings, key: 'nav.settings', roles: ['owner', 'manager'] },
 ];
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const userRole = user?.role || 'observer';
+
+  const visibleItems = navItems.filter((item) => item.roles.includes(userRole));
 
   return (
     <nav className="flex h-full flex-col gap-1 p-3">
@@ -37,7 +42,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <div className="mt-2 flex-1 space-y-0.5">
-        {navItems.map((item) => (
+        {visibleItems.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

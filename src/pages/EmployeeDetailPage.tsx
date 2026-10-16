@@ -2,11 +2,10 @@ import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { api, isMockMode } from '@/lib/api';
-import { mockApi } from '@/dev-mock/mockApi';
+import { api } from '@/lib/api';
 import { ConsentBadge, EnrollmentBadge } from '@/components/badges';
 import { format, subDays } from 'date-fns';
-import { ArrowLeft, Clock, Calendar as CalendarIcon, ShieldAlert, CheckCircle2, UserX } from 'lucide-react';
+import { ArrowLeft, Calendar as CalendarIcon, ShieldAlert, UserX, Activity } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -17,8 +16,6 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 
-const getApiClient = () => (isMockMode() ? mockApi : api);
-
 export function EmployeeDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -28,13 +25,13 @@ export function EmployeeDetailPage() {
 
   const { data: employee, isLoading, refetch } = useQuery({
     queryKey: ['employee', id],
-    queryFn: () => getApiClient().getEmployee(id || ''),
+    queryFn: () => api.getEmployee(id || ''),
     enabled: !!id,
   });
 
   const { data: timeline = [] } = useQuery({
     queryKey: ['timeline', id],
-    queryFn: () => getApiClient().getTimeline(id || '', format(new Date(), 'yyyy-MM-dd')),
+    queryFn: () => api.getTimeline(id || '', format(new Date(), 'yyyy-MM-dd')),
     enabled: !!id,
   });
 
@@ -50,7 +47,7 @@ export function EmployeeDetailPage() {
       return;
     }
     try {
-      await getApiClient().revokeConsent(employee.id);
+      await api.revokeConsent(employee.id);
       toast.success(t('revoke.success'));
       setIsRevokeOpen(false);
       refetch();
@@ -191,6 +188,27 @@ export function EmployeeDetailPage() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Today's Timeline Events */}
+      <div className="rounded-xl border border-line bg-white p-6 shadow-xs">
+        <div className="flex items-center gap-2 mb-4">
+          <Activity size={18} className="text-ink" />
+          <h2 className="text-sm font-semibold text-ink">Bugungi aniqlanishlar tarixi (Timeline)</h2>
+        </div>
+        {timeline.length === 0 ? (
+          <p className="text-xs text-muted">Bugun xodim bo'yicha kadrlar qayd etilmagan.</p>
+        ) : (
+          <div className="space-y-2">
+            {timeline.map((ev) => (
+              <div key={ev.id} className="flex items-center justify-between p-2.5 rounded-lg border border-line bg-surface text-xs font-medium">
+                <span className="font-mono text-ink">{ev.timestamp}</span>
+                <span className="text-slate-700">{ev.camera_name} ({ev.event_type})</span>
+                <span className="font-mono text-emerald-600 font-bold">{Math.round(ev.confidence * 100)}% ishonch</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Revoke Consent Modal */}

@@ -18,7 +18,7 @@ interface TopBarProps {
 
 export function TopBar({ onMenuClick, onAskClick }: TopBarProps) {
   const { t } = useTranslation();
-  const { user, logout } = useAuth();
+  const { logout } = useAuth();
   const connState = useConnectionState();
   const config = stateConfig[connState];
   const Icon = config.icon;

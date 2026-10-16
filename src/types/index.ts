@@ -21,6 +21,7 @@ export interface User {
 export interface Organization {
   id: string;
   name: string;
+  timezone?: string;
   shift_start: string;
   shift_end: string;
   retention_days: number;
@@ -32,13 +33,22 @@ export interface Employee {
   last_name: string;
   position: string;
   department: string;
-  phone: string;
+  phone: string | null;
   consent_status: ConsentStatus;
   consent_date: string | null;
   enrollment_status: EnrollmentStatus;
   enrollment_samples: number;
   created_at: string;
   is_active: boolean;
+}
+
+export interface CameraPosition {
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  fov: number;
+  floor?: number;
 }
 
 export interface Camera {
@@ -50,6 +60,8 @@ export interface Camera {
   latency_ms: number;
   last_frame_at: string | null;
   rtsp_address: string;
+  rtsp_masked?: string;
+  position?: CameraPosition;
   organization_id: string;
 }
 
@@ -58,8 +70,8 @@ export interface AttendanceRecord {
   employee_id: string;
   employee_name: string;
   date: string;
-  first_seen: string;
-  last_seen: string;
+  first_seen: string | null;
+  last_seen: string | null;
   status: 'present' | 'absent' | 'missing';
   late_minutes: number;
   total_present_minutes: number;
@@ -68,7 +80,7 @@ export interface AttendanceRecord {
 export interface TimelineEvent {
   id: string;
   employee_id: string;
-  camera_id: string;
+  camera_id: string | null;
   camera_name: string;
   timestamp: string;
   event_type: 'enter' | 'exit' | 'seen';
@@ -79,7 +91,7 @@ export interface UnknownFace {
   id: string;
   snapshot_url: string;
   detected_at: string;
-  camera_id: string;
+  camera_id: string | null;
   camera_name: string;
   resolution: UnknownFaceResolution;
 }
@@ -99,29 +111,31 @@ export interface AskSource {
 export interface AskResponse {
   text: string;
   sources: AskSource[];
-  confidence: number;
+  confidence: number | null;
 }
 
 export interface LoginResponse {
-  access_token: string;
-  refresh_token: string;
-  user: User;
   requires_2fa: boolean;
+  challenge_token?: string;
+  access_token?: string;
+  refresh_token?: string;
+  user?: User;
 }
 
 export interface AuditLogRecord {
   id: string;
-  user_email: string;
+  user_email: string | null;
   action: string;
   entity: string;
-  entity_id: string;
-  details: string;
-  ip_address: string;
+  entity_id: string | null;
+  details: Record<string, unknown> | string | null;
+  ip_address: string | null;
   created_at: string;
 }
 
 export interface ApiError {
-  error: string;
+  status: number;
+  code: string;
   message: string;
-  code?: string;
+  details?: Record<string, unknown>;
 }

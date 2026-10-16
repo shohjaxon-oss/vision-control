@@ -1,11 +1,8 @@
-import { useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
-import { api, isMockMode } from '@/lib/api';
-import { mockApi } from '@/dev-mock/mockApi';
+import { useState } from 'react';
+import { api } from '@/lib/api';
 import type { AskResponse } from '@/types';
 import { 
-  Sparkles, Send, Clock, Camera as CameraIcon, 
-  HelpCircle, ArrowRight, ShieldCheck 
+  Sparkles, Send, Clock, Camera as CameraIcon 
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -16,15 +13,12 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet';
 
-const getApiClient = () => (isMockMode() ? mockApi : api);
-
 interface AskDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
 export function AskDrawer({ open, onOpenChange }: AskDrawerProps) {
-  const { t } = useTranslation();
   const [question, setQuestion] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<AskResponse | null>(null);
@@ -45,7 +39,7 @@ export function AskDrawer({ open, onOpenChange }: AskDrawerProps) {
     setResult(null);
 
     try {
-      const res = await getApiClient().ask(q);
+      const res = await api.ask(q);
       setResult(res);
       setHistory((prev) => [{ q, res }, ...prev.slice(0, 5)]);
       if (!textToAsk) setQuestion('');
@@ -106,9 +100,11 @@ export function AskDrawer({ open, onOpenChange }: AskDrawerProps) {
                 <span className="text-xs font-bold uppercase tracking-wider text-ink">
                   AI Javobi:
                 </span>
-                <span className="text-[11px] font-mono font-semibold text-text2 tabular-nums">
-                  {Math.round(result.confidence * 100)}% ishonch
-                </span>
+                {result.confidence !== null && result.confidence !== undefined && (
+                  <span className="text-[11px] font-mono font-semibold text-text2 tabular-nums">
+                    {Math.round(result.confidence * 100)}% ishonch
+                  </span>
+                )}
               </div>
 
               <p className="text-sm text-ink leading-relaxed font-normal">
@@ -116,7 +112,7 @@ export function AskDrawer({ open, onOpenChange }: AskDrawerProps) {
               </p>
 
               {/* Source Chips */}
-              {result.sources.length > 0 && (
+              {result.sources && result.sources.length > 0 && (
                 <div className="pt-2 border-t border-line space-y-1.5">
                   <span className="text-[10px] uppercase font-mono font-semibold text-text2 block">
                     Tasdiqlangan manbalar (Sources):

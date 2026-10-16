@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, isMockMode } from '@/lib/api';
-import { mockApi } from '@/dev-mock/mockApi';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { api } from '@/lib/api';
 import type { Camera, CameraType } from '@/types';
 import { format } from 'date-fns';
 import { 
   Camera as CameraIcon, Plus, RefreshCw, CheckCircle2, 
-  XCircle, Play, ShieldCheck, Activity, Eye 
+  XCircle, ShieldCheck, Activity, Eye 
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -18,8 +17,6 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
-
-const getApiClient = () => (isMockMode() ? mockApi : api);
 
 export function CamerasPage() {
   const { t } = useTranslation();
@@ -37,7 +34,7 @@ export function CamerasPage() {
 
   const { data: cameras = [], isLoading, refetch } = useQuery({
     queryKey: ['cameras'],
-    queryFn: () => getApiClient().getCameras(),
+    queryFn: () => api.getCameras(),
   });
 
   const handleTestConnection = async () => {
@@ -48,7 +45,7 @@ export function CamerasPage() {
     setIsTesting(true);
     setTestResult(null);
     try {
-      const res = await getApiClient().testCamera({ name, rtsp_address: rtspAddress, password });
+      const res = await api.testCamera({ name, rtsp_address: rtspAddress, password });
       setTestResult(res);
       if (res.success) {
         toast.success(res.message);
@@ -73,7 +70,7 @@ export function CamerasPage() {
       return;
     }
     try {
-      await getApiClient().createCamera({
+      await api.createCamera({
         name,
         type,
         rtsp_address: rtspAddress,

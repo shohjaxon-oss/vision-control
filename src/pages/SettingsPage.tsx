@@ -1,22 +1,20 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useQuery, useMutation } from '@tanstack/react-query';
-import { api, isMockMode } from '@/lib/api';
-import { mockApi } from '@/dev-mock/mockApi';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { format } from 'date-fns';
 import { 
-  Building2, Clock, Shield, History, 
-  Users, Save, CheckCircle2, Lock 
+  Building2, Shield, History, Save, Lock, QrCode 
 } from 'lucide-react';
 import { toast } from 'sonner';
-
-const getApiClient = () => (isMockMode() ? mockApi : api);
+import { Setup2FAModal } from '@/components/auth/Setup2FAModal';
 
 export function SettingsPage() {
   const { t } = useTranslation();
   const { user } = useAuth();
   const isOwner = user?.role === 'owner';
+  const [show2FAModal, setShow2FAModal] = useState(false);
 
   const [orgName, setOrgName] = useState('Workforce Vision Toshkent Markazi');
   const [shiftStart, setShiftStart] = useState('09:00');
@@ -25,7 +23,7 @@ export function SettingsPage() {
 
   const { data: auditLogs = [], isLoading: isLoadingAudit } = useQuery({
     queryKey: ['auditLogs'],
-    queryFn: () => getApiClient().getAuditLogs(),
+    queryFn: () => api.getAuditLogs(),
     enabled: isOwner,
   });
 
@@ -113,17 +111,25 @@ export function SettingsPage() {
           </form>
 
           {/* User Role Card */}
-          <div className="rounded-xl border border-line bg-surface p-5 space-y-2 shadow-xs">
+          <div className="rounded-xl border border-line bg-surface p-5 space-y-3 shadow-xs">
             <div className="flex items-center gap-2">
               <Shield size={16} className="text-text2" strokeWidth={1.5} />
               <h3 className="text-xs font-semibold text-text2 uppercase tracking-wider">Joriy hisobingiz</h3>
             </div>
             <div className="text-sm font-bold text-ink">{user?.name}</div>
             <div className="text-xs font-mono font-medium text-text2">{user?.email}</div>
-            <div className="pt-2">
+            <div className="pt-1 flex items-center justify-between">
               <span className="inline-block rounded bg-slate-200 border border-slate-300 px-2.5 py-1 text-xs font-mono font-semibold text-ink">
                 Rol: {user?.role === 'owner' ? 'Tizim egasi (Owner)' : user?.role === 'manager' ? 'Menejer' : 'Kuzatuvchi'}
               </span>
+              <button
+                type="button"
+                onClick={() => setShow2FAModal(true)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium border border-line rounded bg-white hover:bg-surface text-ink transition-colors"
+              >
+                <QrCode size={13} />
+                2FA Sozlash
+              </button>
             </div>
           </div>
         </div>
@@ -171,8 +177,8 @@ export function SettingsPage() {
                         <td className="py-2.5 px-4 font-mono font-semibold text-[11px] text-ink">
                           {log.action}
                         </td>
-                        <td className="py-2.5 px-4 text-text2 max-w-xs truncate" title={log.details}>
-                          {log.details}
+                        <td className="py-2.5 px-4 text-text2 max-w-xs truncate" title={typeof log.details === 'object' && log.details !== null ? JSON.stringify(log.details) : String(log.details ?? '')}>
+                          {typeof log.details === 'object' && log.details !== null ? JSON.stringify(log.details) : String(log.details ?? '—')}
                         </td>
                         <td className="py-2.5 px-4 font-mono font-medium text-right text-text2 tabular-nums">
                           {log.ip_address}
@@ -186,6 +192,8 @@ export function SettingsPage() {
           </div>
         </div>
       </div>
+
+      <Setup2FAModal open={show2FAModal} onOpenChange={setShow2FAModal} />
     </div>
   );
 }

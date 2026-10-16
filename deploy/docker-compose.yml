@@ -1,4 +1,60 @@
+version: "3.8"
+
+networks:
+  wfv_internal:
+    driver: bridge
+    internal: false
+
+volumes:
+  pg_data:
+  snapshots_data:
+
 services:
+  # ============================================================================
+  # 1. Edge Ingress Proxy (The ONLY service with published ports)
+  # ============================================================================
+  caddy:
+    image: caddy:2.8.4-alpine
+    container_name: wfv-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      core-api:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    networks:
+      - wfv_internal
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+
+  # ============================================================================
+  # 2. Frontend Web Application
+  # ============================================================================
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+    container_name: wfv-frontend
+    restart: unless-stopped
+    networks:
+      - wfv_internal
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+
+  # ============================================================================
+  # 3. Database: PostgreSQL + pgvector (Internal network only, NO published ports!)
+  # ============================================================================
   postgres:
     image: pgvector/pgvector:pg16
     container_name: wfv-postgres
@@ -6,68 +62,120 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-wfv_db}
       POSTGRES_USER: ${POSTGRES_USER:-wfv_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wfv_secret_2026}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
-    ports:
-      - "5432:5432"
+      - pg_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    networks:
+      - wfv_internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wfv_user} -d ${POSTGRES_DB:-wfv_db}"]
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
 
+  # ============================================================================
+  # 4. Database Migrator (Runs once on startup, applies Alembic migrations)
+  # ============================================================================
+  core-api-migrate:
+    build:
+      context: ../core-api
+      dockerfile: Dockerfile
+    container_name: wfv-migrator
+    command: alembic upgrade head
+    environment:
+      ENV: ${ENV:-production}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wfv_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-wfv_db}
+      JWT_SECRET: ${JWT_SECRET}
+      AES_ENCRYPTION_KEY: ${AES_ENCRYPTION_KEY}
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - wfv_internal
+
+  # ============================================================================
+  # 5. Core API Server (Internal network only, NO published ports!)
+  # ============================================================================
+  core-api:
+    build:
+      context: ../core-api
+      dockerfile: Dockerfile
+    container_name: wfv-core-api
+    restart: unless-stopped
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
+    environment:
+      ENV: ${ENV:-production}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wfv_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-wfv_db}
+      JWT_SECRET: ${JWT_SECRET}
+      AES_ENCRYPTION_KEY: ${AES_ENCRYPTION_KEY}
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+      GO2RTC_API_URL: http://go2rtc:1984
+    volumes:
+      - snapshots_data:/app/data/snapshots
+    depends_on:
+      postgres:
+        condition: service_healthy
+      core-api-migrate:
+        condition: service_completed_successfully
+    networks:
+      - wfv_internal
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8000/health\")'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+
+  # ============================================================================
+  # 6. go2rtc Streaming Gateway (Internal network only, pinned version!)
+  # ============================================================================
   go2rtc:
-    image: alexxit/go2rtc:latest
+    image: alexxit/go2rtc:v1.9.4
     container_name: wfv-go2rtc
     restart: unless-stopped
     volumes:
       - ../ingestion/go2rtc.yaml:/config/go2rtc.yaml:ro
-    ports:
-      - "1984:1984" # Web UI and API
-      - "8554:8554" # RTSP
-      - "8555:8555/tcp" # WebRTC
-      - "8555:8555/udp"
+    networks:
+      - wfv_internal
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
 
-  api:
-    build:
-      context: ../core-api
-      dockerfile: Dockerfile
-    container_name: wfv-api
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wfv_user}:${POSTGRES_PASSWORD:-wfv_secret_2026}@postgres:5432/${POSTGRES_DB:-wfv_db}
-      JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_key_wfv_2026_production}
-      AES_ENCRYPTION_KEY: ${AES_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
-      GO2RTC_API_URL: http://go2rtc:1984
-    ports:
-      - "8000:8000"
-
+  # ============================================================================
+  # 7. Vision Worker (Internal network only)
+  # ============================================================================
   vision-worker:
     build:
       context: ../vision
       dockerfile: Dockerfile
-    container_name: wfv-vision
+    container_name: wfv-vision-worker
     restart: unless-stopped
-    depends_on:
-      - api
-      - go2rtc
     environment:
-      API_BASE_URL: http://api:8000/api/v1
-      GO2RTC_RTSP_URL: rtsp://go2rtc:8554
-
-  web:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.frontend
-    container_name: wfv-web
-    restart: unless-stopped
-    ports:
-      - "3000:80"
-
-volumes:
-  postgres_data:
+      API_BASE_URL: http://core-api:8000/api/v1
+      GO2RTC_API_URL: http://go2rtc:1984
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+    depends_on:
+      core-api:
+        condition: service_healthy
+      go2rtc:
+        condition: service_started
+    networks:
+      - wfv_internal
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 2G
